@@ -69,32 +69,19 @@ def _get_image_path_for(source_type):
     return _PATH_IMAGE_ONLY_PNG
 
 
-def _mkdir_if_missing(path):
-    try:
-        os.mkdir(path)
-        return True
-    except OSError as e:
-        if e.errno == errno.EEXIST:
-            return False
-        raise
-
-
 def _run(cmd, verbose):
     if verbose:
         print('# %s' % ' '.join(cmd))
         stdout = None
     else:
-        stdout = open('/dev/null', 'w')
+        stdout = subprocess.DEVNULL
 
     try:
-        subprocess.call(cmd, stdout=stdout, stderr=stdout)
+        subprocess.call(cmd, stdout=stdout, stderr=subprocess.STDOUT)
     except OSError as e:
         if e.errno != errno.ENOENT:
             raise
         raise _CommandNotFoundException(cmd[0])
-    finally:
-        if not verbose:
-            stdout.close()
 
 
 def _generate_dummy_menu_entries():
@@ -208,7 +195,7 @@ def _make_final_grub_cfg_content(source_type, source_grub_cfg, resolution_or_non
 
 
 def resolution(text):
-    m = re.match('^([1-9][0-9]{2,})x([1-9][0-9]{2,})$', text)
+    m = re.fullmatch('([1-9][0-9]{2,})x([1-9][0-9]{2,})', text)
     if not m:
         raise ValueError('Not a supported resolution: "%s"' % text)
     width = int(m.group(1))
@@ -286,6 +273,8 @@ def _ignore_oserror(func, *args, **kwargs):
 
 
 def _grub2_directory(platform):
+    if distro.name() == 'openSUSE Leap':
+        return '/usr/share/grub2/%s' % platform
     return  '/usr/lib/grub/%s' % platform
 
 
@@ -309,11 +298,13 @@ def _grub2_ovmf_tuple():
     """
     _DEBIAN = 'Debian GNU/Linux'
     _ARCH_LINUX = 'Arch Linux'
+    cpu = platform.machine()
     distro_map = {
         _ARCH_LINUX: ('/usr/share/edk2-ovmf/x64/OVMF_CODE.fd', 'edk2-ovmf'),
         _DEBIAN: ('/usr/share/OVMF/OVMF_CODE.fd', 'ovmf'),
         'Fedora': ('/usr/share/edk2/ovmf/OVMF_CODE.fd', 'edk2-ovmf'),
         'Gentoo': ('/usr/share/edk2-ovmf/OVMF_CODE.fd', 'sys-firmware/edk2-ovmf'),
+        'openSUSE Leap': ('/usr/share/qemu/ovmf-%s-code.bin' % cpu, 'qemu-ovmf-%s' % cpu),
     }
     distro_map['Ubuntu'] = distro_map[_DEBIAN]
     distro_map['Manjaro Linux'] = distro_map[_ARCH_LINUX]
@@ -414,15 +405,15 @@ def _inner_main(options):
 
                 assemble_cmd.append('boot/grub/grub.cfg=%s' % abs_tmp_grub_cfg_file)
 
+            if source_type != _SourceType.DIRECTORY:
+                assemble_cmd += [
+                    'boot/grub/%s=%s' % (_get_image_path_for(source_type), normalized_source),
+                    ]
+            else:
+                assemble_cmd += [
+                    'boot/grub/%s/=%s' % (_PATH_FULL_THEME, normalized_source),
+                    ]
             try:
-                if source_type != _SourceType.DIRECTORY:
-                    assemble_cmd += [
-                        'boot/grub/%s=%s' % (_get_image_path_for(source_type), normalized_source),
-                        ]
-                else:
-                    assemble_cmd += [
-                        'boot/grub/%s/=%s' % (_PATH_FULL_THEME, normalized_source),
-                        ]
                 _run(assemble_cmd, options.verbose)
 
                 if not os.path.exists(abs_tmp_img_file):
